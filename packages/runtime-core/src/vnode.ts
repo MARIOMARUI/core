@@ -364,6 +364,7 @@ export function isSameVNodeType(n1: VNode, n2: VNode): boolean {
     // HMR only: if the component has been hot-updated, force a reload.
     return false
   }
+  // 判断是否是同一个虚拟dom type:标签名 key：v-for循环绑定的key值
   return n1.type === n2.type && n1.key === n2.key
 }
 

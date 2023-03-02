@@ -1605,6 +1605,7 @@ function baseCreateRenderer(
     // fast path
     if (patchFlag > 0) {
       if (patchFlag & PatchFlags.KEYED_FRAGMENT) {
+        // 有Key的比较
         // this could be either fully-keyed or mixed (some keyed some not)
         // presence of patchFlag means children are guaranteed to be arrays
         patchKeyedChildren(
@@ -1621,6 +1622,7 @@ function baseCreateRenderer(
         return
       } else if (patchFlag & PatchFlags.UNKEYED_FRAGMENT) {
         // unkeyed
+        // 没有Key的比较
         patchUnkeyedChildren(
           c1 as VNode[],
           c2 as VNodeArrayChildren,
@@ -1687,7 +1689,7 @@ function baseCreateRenderer(
       }
     }
   }
-
+  // 由于没有使用key所以只能通过比较长度来决定卸载和挂载,所以一定要传递key,否则可能出现意想不到的错误。 
   const patchUnkeyedChildren = (
     c1: VNode[],
     c2: VNodeArrayChildren,
@@ -1705,6 +1707,7 @@ function baseCreateRenderer(
     const newLength = c2.length
     const commonLength = Math.min(oldLength, newLength)
     let i
+    // 1.先比较两个数组都有的子节点
     for (i = 0; i < commonLength; i++) {
       const nextChild = (c2[i] = optimized
         ? cloneIfMounted(c2[i] as VNode)
@@ -1721,6 +1724,7 @@ function baseCreateRenderer(
         optimized
       )
     }
+    // 2.如果newLength比oldLength大表示需要挂载
     if (oldLength > newLength) {
       // remove old
       unmountChildren(
@@ -1732,6 +1736,7 @@ function baseCreateRenderer(
         commonLength
       )
     } else {
+      // 3.如果newLength比oldLength小表示要卸载
       // mount new
       mountChildren(
         c2,
@@ -1767,6 +1772,10 @@ function baseCreateRenderer(
     // 1. sync from start
     // (a b) c
     // (a b) d e
+    // 第一步 头比较
+    // n1:当前被比较的vnode。
+    // n2:当前比较的vnode。
+    // 从头部开始一一比较,找到哪些节点是相同的,找到的节点表示不需要发生任何移动。调用patch函数更新即可。直到发现当前比较的n1、n2不相同,退出循环。
     while (i <= e1 && i <= e2) {
       const n1 = c1[i]
       const n2 = (c2[i] = optimized
@@ -1793,6 +1802,7 @@ function baseCreateRenderer(
     // 2. sync from end
     // a (b c)
     // d e (b c)
+    // 第二步 尾比较
     while (i <= e1 && i <= e2) {
       const n1 = c1[e1]
       const n2 = (c2[e2] = optimized
@@ -1818,12 +1828,15 @@ function baseCreateRenderer(
     }
 
     // 3. common sequence + mount
+    // 第三步 新增节点
     // (a b)
     // (a b) c
     // i = 2, e1 = 1, e2 = 2
     // (a b)
     // c (a b)
     // i = 0, e1 = -1, e2 = 0
+    // i>e1:之前通过尾比较和头比较,如果i>e1表示c1已经遍历完毕。
+    // i<=e2:表示c2还没有遍历完毕,这说明有新增的节点。
     if (i > e1) {
       if (i <= e2) {
         const nextPos = e2 + 1
@@ -1848,6 +1861,7 @@ function baseCreateRenderer(
     }
 
     // 4. common sequence + unmount
+    // 第四部 卸载节点
     // (a b) c
     // (a b)
     // i = 2, e1 = 2, e2 = 1
@@ -1862,20 +1876,23 @@ function baseCreateRenderer(
     }
 
     // 5. unknown sequence
+    // 第五步 处理特殊情况
     // [i ... e1 + 1]: a b [c d e] f g
     // [i ... e2 + 1]: a b [e d c h] f g
     // i = 2, e1 = 4, e2 = 5
     else {
       const s1 = i // prev starting index
       const s2 = i // next starting index
-
+      //创建映射表用于快读通过节点的key找到这个节点在c2中的位置
       // 5.1 build key:index map for newChildren
+      // 5.1 构建keyToNewIndexMap表
       const keyToNewIndexMap: Map<string | number | symbol, number> = new Map()
       for (i = s2; i <= e2; i++) {
         const nextChild = (c2[i] = optimized
           ? cloneIfMounted(c2[i] as VNode)
           : normalizeVNode(c2[i]))
         if (nextChild.key != null) {
+          //如果有相同的key需要报错
           if (__DEV__ && keyToNewIndexMap.has(nextChild.key)) {
             warn(
               `Duplicate keys found during update:`,
@@ -1883,16 +1900,20 @@ function baseCreateRenderer(
               `Make sure keys are unique.`
             )
           }
+            //将key作为键 c2中这个节点的索引作为值
           keyToNewIndexMap.set(nextChild.key, i)
         }
       }
 
       // 5.2 loop through old children left to be patched and try to patch
+      // 5.2 创建newIndexToOldIndexMap数组,这个数组的长度为e2-s2+1,初始值都为0。
       // matching nodes & remove nodes that are no longer present
       let j
+      //已经比较过的节点数量
       let patched = 0
+      //应该被比较的节点数量
       const toBePatched = e2 - s2 + 1
-      let moved = false
+      let moved = false //是否存在需要移动的节点
       // used to track whether any node has moved
       let maxNewIndexSoFar = 0
       // works as Map<newIndex, oldIndex>
@@ -1900,18 +1921,21 @@ function baseCreateRenderer(
       // and oldIndex = 0 is a special value indicating the new node has
       // no corresponding old node.
       // used for determining longest stable subsequence
+      // newIndexToOldIndexMap:用于找到哪些节点需要被移动
       const newIndexToOldIndexMap = new Array(toBePatched)
       for (i = 0; i < toBePatched; i++) newIndexToOldIndexMap[i] = 0
-
+      // 遍历[s1,e1]中所有节点,找到每个节点在c2中的位置。并完成newIndexToOldIndexMap的赋
       for (i = s1; i <= e1; i++) {
         const prevChild = c1[i]
         if (patched >= toBePatched) {
           // all new children have been patched so this can only be a removal
+          //如果已经patch过的数量大于应该patched的数量表示有节点需要被删除。
           unmount(prevChild, parentComponent, parentSuspense, true)
           continue
         }
         let newIndex
         if (prevChild.key != null) {
+          //根据prevChild的key找到这个节点在c2中的索引
           newIndex = keyToNewIndexMap.get(prevChild.key)
         } else {
           // key-less node, try to locate a key-less node of the same type
@@ -1925,13 +1949,17 @@ function baseCreateRenderer(
             }
           }
         }
+        //如果没有找到则卸载这个节点
         if (newIndex === undefined) {
           unmount(prevChild, parentComponent, parentSuspense, true)
         } else {
+          //建立同一个元素在c1和c2中位置的关系
           newIndexToOldIndexMap[newIndex - s2] = i + 1
+          //判断是否需要移动
           if (newIndex >= maxNewIndexSoFar) {
             maxNewIndexSoFar = newIndex
           } else {
+            //标识当前有元素是需要移动的
             moved = true
           }
           patch(
@@ -1951,6 +1979,10 @@ function baseCreateRenderer(
 
       // 5.3 move and mount
       // generate longest stable subsequence only when nodes have moved
+      // 求最小递归子序列getSequence
+      // [1,10,3,20,8,100,19]
+      //  1,1 ,1, 1,1,1  ,1  ⬇第二个和前面的所有对比只要大就最大的基础上+1
+      //  1,2 ,2, 3,3,4  ,3
       const increasingNewIndexSequence = moved
         ? getSequence(newIndexToOldIndexMap)
         : EMPTY_ARR
